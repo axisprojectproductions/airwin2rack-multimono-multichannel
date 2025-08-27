@@ -5,6 +5,7 @@
 #include "AirwinRegistry.h"
 #include "juce_audio_processors/juce_audio_processors.h"
 #include "clap-juce-extensions/clap-juce-extensions.h"
+#include <array>
 
 #if MAC
 #include <execinfo.h>
@@ -80,6 +81,16 @@ class AWConsolidatedAudioProcessor : public juce::AudioProcessor,
 {
   public:
     static constexpr int nAWParams{10};
+
+    // ------------------------------------------------------------------
+    // Multi‑mono modification
+    // ------------------------------------------------------------------
+    static constexpr int kNumMonoSlots = 20;
+    using ProcessorPtr = std::unique_ptr<AirwinRegistry::Processor>;
+    std::array<ProcessorPtr, kNumMonoSlots> monoSlots;
+
+    void rebuildMonoSlots (int registryIndex);
+
 
     //==============================================================================
     AWConsolidatedAudioProcessor();
