@@ -13,9 +13,10 @@
 //==============================================================================
 AWConsolidatedAudioProcessor::AWConsolidatedAudioProcessor()
     : AudioProcessor(BusesProperties()
-                         .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                         .withOutput("Output", juce::AudioChannelSet::stereo(), true))
+                         .withInput("Main", juce::AudioChannelSet::discreteChannels(kNumMonoSlots), true)
+                         .withOutput("Main", juce::AudioChannelSet::discreteChannels(kNumMonoSlots), true)
 {
+    rebuildMonoSlots(0);
     AirwinConsolidatedBase::defaultSampleRate = 48000;
 
     // Multiple calls to addParameter here
@@ -196,15 +197,11 @@ void AWConsolidatedAudioProcessor::releaseResources()
 
 bool AWConsolidatedAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
 {
-    bool inputValid = (layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo() ||
-                       layouts.getMainInputChannelSet() == juce::AudioChannelSet::mono());
+    if (layouts.getBusBufferCount(true) != 1 || layouts.getBusBufferCount(false) != 1)
+        return false;
 
-    bool outputValid = (layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo() ||
-                        layouts.getMainOutputChannelSet() == juce::AudioChannelSet::mono());
-
-    bool testValid = layouts.getMainInputChannelSet().size() <= layouts.getMainOutputChannelSet().size();
-
-    return inputValid && outputValid && testValid;
+    int ch = layouts.getMainInputChannelSet().size();
+    return ch >= 1 && ch <= kNumMonoSlots && ch == layouts.getMainOutputChannelSet().size();
 }
 
 template <typename T> void AWConsolidatedAudioProcessor::processBlockT(juce::AudioBuffer<T> &buffer)
@@ -324,7 +321,15 @@ template <typename T> void AWConsolidatedAudioProcessor::processBlockT(juce::Aud
 void AWConsolidatedAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                                 juce::MidiBuffer &midiMessages)
 {
-    processBlockT(buffer);
+    juce::ScopedNoDenormals noDenormals;
+    int frames = buffer.getNumSamples();
+    int total  = buffer.getNumChannels();
+
+    for (int ch = 0; ch < total && ch < kNumMonoSlots; ++ch)
+    {
+        float* mono = buffer.getWritePointer(ch);
+        monoSlots[ch]->processReplacing(mono, mono, frames);
+    }
 }
 
 void AWConsolidatedAudioProcessor::processBlock(juce::AudioBuffer<double> &buffer,
@@ -347,7 +352,8 @@ juce::AudioProcessorEditor *AWConsolidatedAudioProcessor::createEditor()
 
 void AWConsolidatedAudioProcessor::parameterValueChanged(int parameterIndex, float newValue)
 {
-    refreshUI = true;
+    for (auto& slot : monoSlots)
+        slot->setParameter(parameterIndex, newValue);
 }
 
 void AWConsolidatedAudioProcessor::setAWProcessorTo(int registryIndex, bool initDisplay)
@@ -529,4 +535,21 @@ bool AWConsolidatedAudioProcessor::PrecisionDependantProcessing<T>::isValid() co
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()
 {
     return new AWConsolidatedAudioProcessor();
+void AWConsolidatedAudioProcessor::rebuildMonoSlots (int idx)
+{
+    const auto& factory = AirwinRegistry::registry[idx].maker;
+    for (auto& slot : monoSlots)
+        slot.reset(factory());
+
+    // mirror parameters
+    if (! monoSlots[0])
+        return;
+    for (int p = 0; p < monoSlots[0]->getParameterCount(); ++p)
+    {
+        float v = monoSlots[0]->getParameter(p);
+        for (auto& slot : monoSlots)
+            slot->setParameter(p, v);
+    }
+}
+
 }
